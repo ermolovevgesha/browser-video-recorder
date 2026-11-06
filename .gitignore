@@ -1,0 +1,18 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv/
+
+# Video outputs
+video/
+*.webm
+*.mp4
+
+# Task documents
+*.pdf
