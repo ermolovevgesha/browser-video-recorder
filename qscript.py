@@ -1,7 +1,6 @@
 import os
 import random
 import shutil
-import sys
 import time
 from pathlib import Path
 
@@ -239,11 +238,11 @@ def CaptureVideo_Magento(
                 launch_args["executable_path"] = custom_bin
 
             browser = pw.chromium.launch(**launch_args)
-            user_agent = (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-                if sys.platform == "win32"
-                else "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-            )
+
+            probe_page = browser.new_page()
+            user_agent = probe_page.evaluate("navigator.userAgent").replace("HeadlessChrome", "Chrome")
+            probe_page.close()
+
             context = browser.new_context(
                 record_video_dir=str(output_dir),
                 record_video_size={"width": 1280, "height": 720},
