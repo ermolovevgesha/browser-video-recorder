@@ -1,6 +1,7 @@
 import os
 import random
 import shutil
+import sys
 import time
 from pathlib import Path
 
@@ -11,6 +12,18 @@ PATH_TO_VIDEO_FOLDER = "./video"
 current_page = None
 
 CURSOR_SCRIPT = """(() => {
+  try {
+    Object.defineProperty(navigator, 'webdriver', {
+      get: () => undefined,
+    });
+  } catch (e) {}
+
+  try {
+    if (!window.chrome) {
+      window.chrome = { runtime: {} };
+    }
+  } catch (e) {}
+
   function initCursor() {
     if (document.getElementById('cursor-layer')) return;
     const target = document.head || document.documentElement || document.body;
@@ -214,6 +227,7 @@ def CaptureVideo_Magento(
                     "--disable-blink-features=AutomationControlled",
                     "--no-sandbox",
                 ],
+                "ignore_default_args": ["--enable-automation"],
             }
             custom_bin = os.environ.get("CHROMIUM_PATH")
             if not custom_bin:
@@ -225,14 +239,16 @@ def CaptureVideo_Magento(
                 launch_args["executable_path"] = custom_bin
 
             browser = pw.chromium.launch(**launch_args)
+            user_agent = (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+                if sys.platform == "win32"
+                else "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+            )
             context = browser.new_context(
                 record_video_dir=str(output_dir),
                 record_video_size={"width": 1280, "height": 720},
                 viewport={"width": 1280, "height": 720},
-                user_agent=(
-                    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-                    "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
-                ),
+                user_agent=user_agent,
                 locale="en-US",
             )
             context.add_init_script(CURSOR_SCRIPT)
@@ -276,7 +292,15 @@ def CaptureVideo_Magento(
                 page.keyboard.press("Enter")
 
             first_result_selector = 'a[data-testid="result-title-a"]'
-            page.wait_for_selector(first_result_selector, state="visible", timeout=25000)
+            try:
+                page.wait_for_selector(first_result_selector, state="visible", timeout=20000)
+            except Exception:
+                if "418.html" in page.url or "home-error" in page.url:
+                    query_slug = f"Magento developer in {city}".replace(" ", "+")
+                    page.goto(f"https://duckduckgo.com/?q={query_slug}", wait_until="domcontentloaded", timeout=25000)
+                    page.wait_for_selector(first_result_selector, state="visible", timeout=20000)
+                else:
+                    raise
             time.sleep(1.0)
 
             first_result = page.locator(first_result_selector).first

@@ -1,5 +1,6 @@
 import csv
 import sys
+import time
 from pathlib import Path
 
 import qscript
@@ -32,6 +33,8 @@ def main():
                 print(f"Saved: {video_path}")
             else:
                 print(f"Failed to record for {company}")
+
+            time.sleep(1.5)
 
 
 if __name__ == "__main__":
