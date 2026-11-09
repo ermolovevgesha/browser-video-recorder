@@ -14,44 +14,6 @@ PATH_TO_VIDEO_FOLDER = "./video"
 current_page: Page | None = None
 
 CURSOR_SCRIPT = """(() => {
-  try {
-    delete Object.getPrototypeOf(navigator).webdriver;
-  } catch (e) {}
-
-  try {
-    Object.defineProperty(navigator, 'webdriver', {
-      get: () => undefined,
-    });
-  } catch (e) {}
-
-  try {
-    if (!window.chrome) {
-      window.chrome = { runtime: {} };
-    }
-  } catch (e) {}
-
-  try {
-    if (!navigator.plugins || navigator.plugins.length === 0) {
-      Object.defineProperty(navigator, 'plugins', {
-        get: () => [1, 2, 3, 4, 5],
-      });
-    }
-  } catch (e) {}
-
-  try {
-    Object.defineProperty(navigator, 'languages', {
-      get: () => ['en-US', 'en'],
-    });
-  } catch (e) {}
-
-  try {
-    if (window.__force_win32 || navigator.userAgent.includes('Windows NT')) {
-      Object.defineProperty(navigator, 'platform', {
-        get: () => 'Win32',
-      });
-    }
-  } catch (e) {}
-
   function initCursor() {
     if (document.getElementById('cursor-layer')) return;
     const target = document.head || document.documentElement || document.body;
@@ -301,19 +263,11 @@ def CaptureVideo_Magento(
             native_ua = probe_page.evaluate("navigator.userAgent").replace("HeadlessChrome", "Chrome")
             probe_page.close()
 
-            if sys.platform == "win32" or os.environ.get("EMULATE_WINDOWS") == "1":
-                if "Windows NT" not in native_ua:
-                    user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-                else:
-                    user_agent = native_ua
-            else:
-                user_agent = native_ua
-
             context = browser.new_context(
                 record_video_dir=str(output_dir),
                 record_video_size={"width": 1280, "height": 720},
                 viewport={"width": 1280, "height": 720},
-                user_agent=user_agent,
+                user_agent=native_ua,
                 locale="en-US",
             )
             context.add_init_script(CURSOR_SCRIPT)
@@ -344,28 +298,48 @@ def CaptureVideo_Magento(
             type_text(page, f"Magento developer in {city}")
             time.sleep(0.6)
 
-            submit_btn = page.locator('form button[type="submit"]:visible').first
+            submit_btn = page.locator(
+                'form button[type="submit"]:visible, button[aria-label="Search"]:visible'
+            ).first
             if submit_btn.count() == 0:
                 try:
-                    page.wait_for_selector('form button[type="submit"]:visible', state="visible", timeout=3000)
-                    submit_btn = page.locator('form button[type="submit"]:visible').first
+                    page.wait_for_selector(
+                        'form button[type="submit"]:visible, button[aria-label="Search"]:visible',
+                        state="visible",
+                        timeout=3000,
+                    )
+                    submit_btn = page.locator(
+                        'form button[type="submit"]:visible, button[aria-label="Search"]:visible'
+                    ).first
                 except Exception:
                     pass
 
             btn_box = submit_btn.bounding_box() if submit_btn.count() > 0 else None
             if btn_box:
-                x, y = move_mouse(page, x, y, btn_box["x"] + btn_box["width"] * 0.5, btn_box["y"] + btn_box["height"] * 0.5, steps=25)
+                x, y = move_mouse(
+                    page,
+                    x,
+                    y,
+                    btn_box["x"] + btn_box["width"] * 0.5,
+                    btn_box["y"] + btn_box["height"] * 0.5,
+                    steps=25,
+                )
                 page.mouse.click(x, y)
-                time.sleep(0.3)
-            page.keyboard.press("Enter")
+            else:
+                page.keyboard.press("Enter")
 
             first_result_selector = 'a[data-testid="result-title-a"]'
-            try:
-                page.wait_for_selector(first_result_selector, state="visible", timeout=12000)
-            except Exception:
-                query_slug = f"Magento developer in {city}".replace(" ", "+")
-                page.goto(f"https://duckduckgo.com/?q={query_slug}", wait_until="domcontentloaded", timeout=25000)
-                page.wait_for_selector(first_result_selector, state="visible", timeout=20000)
+            for _ in range(3):
+                try:
+                    page.wait_for_selector(first_result_selector, state="visible", timeout=20000)
+                    break
+                except Exception as e:
+                    if "context was destroyed" in str(e).lower() or "navigation" in str(e).lower():
+                        time.sleep(1.0)
+                        continue
+                    page.keyboard.press("Enter")
+                    page.wait_for_selector(first_result_selector, state="visible", timeout=15000)
+                    break
             time.sleep(1.0)
 
             first_result = page.locator(first_result_selector).first
