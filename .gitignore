@@ -11,8 +11,12 @@ wheels/
 
 # Video outputs
 video/
+uploads/
 *.webm
 *.mp4
+*.db
+*.db-wal
+*.db-shm
 
 # Task documents
 *.pdf
