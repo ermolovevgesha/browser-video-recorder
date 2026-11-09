@@ -351,9 +351,24 @@ def CaptureVideo_Magento(
             first_result = page.locator(first_result_selector).first
             res_box = first_result.bounding_box()
             if res_box:
-                x, y = move_mouse(page, x, y, res_box["x"] + min(50, res_box["width"] * 0.3), res_box["y"] + res_box["height"] * 0.5, steps=35)
+                try:
+                    first_result.evaluate("el => { el.target = '_self'; el.removeAttribute('target'); }")
+                except Exception:
+                    pass
+
+                target_click_x = res_box["x"] + min(50.0, res_box["width"] * 0.3)
+                target_click_y = res_box["y"] + res_box["height"] * 0.5
+                x, y = move_mouse(page, x, y, target_click_x, target_click_y, steps=35)
                 page.mouse.click(x, y)
-                time.sleep(1.5)
+                try:
+                    first_result.click(timeout=3000)
+                except Exception:
+                    pass
+                try:
+                    page.wait_for_load_state("domcontentloaded", timeout=7000)
+                except Exception:
+                    pass
+                time.sleep(3.0)
 
             video = page.video
             context.close()
