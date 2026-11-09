@@ -6,7 +6,7 @@ from pathlib import Path
 import qscript
 
 
-def main():
+def main() -> None:
     csv_path = Path("input.csv")
     if not csv_path.exists():
         print(f"File not found: {csv_path}", file=sys.stderr)

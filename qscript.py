@@ -1,16 +1,23 @@
+from __future__ import annotations
+
 import os
 import random
 import shutil
+import sys
 import time
 from pathlib import Path
 
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import Page, sync_playwright
 
 PATH_TO_VIDEO_FOLDER = "./video"
 
-current_page = None
+current_page: Page | None = None
 
 CURSOR_SCRIPT = """(() => {
+  try {
+    delete Object.getPrototypeOf(navigator).webdriver;
+  } catch (e) {}
+
   try {
     Object.defineProperty(navigator, 'webdriver', {
       get: () => undefined,
@@ -20,6 +27,28 @@ CURSOR_SCRIPT = """(() => {
   try {
     if (!window.chrome) {
       window.chrome = { runtime: {} };
+    }
+  } catch (e) {}
+
+  try {
+    if (!navigator.plugins || navigator.plugins.length === 0) {
+      Object.defineProperty(navigator, 'plugins', {
+        get: () => [1, 2, 3, 4, 5],
+      });
+    }
+  } catch (e) {}
+
+  try {
+    Object.defineProperty(navigator, 'languages', {
+      get: () => ['en-US', 'en'],
+    });
+  } catch (e) {}
+
+  try {
+    if (window.__force_win32 || navigator.userAgent.includes('Windows NT')) {
+      Object.defineProperty(navigator, 'platform', {
+        get: () => 'Win32',
+      });
     }
   } catch (e) {}
 
@@ -166,7 +195,15 @@ CURSOR_SCRIPT = """(() => {
 })();"""
 
 
-def move_mouse(page, start_x, start_y, target_x, target_y, steps=30, delay=0.015):
+def move_mouse(
+    page: Page,
+    start_x: float,
+    start_y: float,
+    target_x: float,
+    target_y: float,
+    steps: int = 30,
+    delay: float = 0.015,
+) -> tuple[float, float]:
     for i in range(1, steps + 1):
         t = i / steps
         ease = t * t * (3 - 2 * t)
@@ -177,13 +214,19 @@ def move_mouse(page, start_x, start_y, target_x, target_y, steps=30, delay=0.015
     return target_x, target_y
 
 
-def type_text(page, text):
+def type_text(page: Page, text: str) -> None:
     for ch in text:
         page.keyboard.type(ch)
         time.sleep(0.2 if ch == " " else random.uniform(0.07, 0.14))
 
 
-def ShowCallout(text, bgColor="#ffeb3b", textColor="#000000", fade=2.0, page=None):
+def ShowCallout(
+    text: str,
+    bgColor: str = "#ffeb3b",
+    textColor: str = "#000000",
+    fade: float = 2.0,
+    page: Page | None = None,
+) -> None:
     target = page or current_page
     if not target:
         return
@@ -210,6 +253,21 @@ def CaptureVideo_Magento(
     street,
     house_no,
 ):
+    """Record a browser automation scenario into a .webm video.
+
+    Args:
+        url (str): Target start URL (e.g. DuckDuckGo).
+        company_name (str): Name of the company for branding and filename.
+        language (str): Locale language code.
+        country (str): Target country name.
+        postcode (str): Postal code.
+        city (str): City name used in the search query.
+        street (str): Street address.
+        house_no (str): House number.
+
+    Returns:
+        Optional[str]: Absolute path to the recorded .webm file, or None on failure.
+    """
     global current_page
 
     output_dir = Path(PATH_TO_VIDEO_FOLDER).resolve()
@@ -240,8 +298,16 @@ def CaptureVideo_Magento(
             browser = pw.chromium.launch(**launch_args)
 
             probe_page = browser.new_page()
-            user_agent = probe_page.evaluate("navigator.userAgent").replace("HeadlessChrome", "Chrome")
+            native_ua = probe_page.evaluate("navigator.userAgent").replace("HeadlessChrome", "Chrome")
             probe_page.close()
+
+            if sys.platform == "win32" or os.environ.get("EMULATE_WINDOWS") == "1":
+                if "Windows NT" not in native_ua:
+                    user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+                else:
+                    user_agent = native_ua
+            else:
+                user_agent = native_ua
 
             context = browser.new_context(
                 record_video_dir=str(output_dir),
@@ -280,26 +346,26 @@ def CaptureVideo_Magento(
 
             submit_btn = page.locator('form button[type="submit"]:visible').first
             if submit_btn.count() == 0:
-                page.wait_for_selector('form button[type="submit"]:visible', state="visible", timeout=5000)
-                submit_btn = page.locator('form button[type="submit"]:visible').first
+                try:
+                    page.wait_for_selector('form button[type="submit"]:visible', state="visible", timeout=3000)
+                    submit_btn = page.locator('form button[type="submit"]:visible').first
+                except Exception:
+                    pass
 
-            btn_box = submit_btn.bounding_box()
+            btn_box = submit_btn.bounding_box() if submit_btn.count() > 0 else None
             if btn_box:
                 x, y = move_mouse(page, x, y, btn_box["x"] + btn_box["width"] * 0.5, btn_box["y"] + btn_box["height"] * 0.5, steps=25)
                 page.mouse.click(x, y)
-            else:
-                page.keyboard.press("Enter")
+                time.sleep(0.3)
+            page.keyboard.press("Enter")
 
             first_result_selector = 'a[data-testid="result-title-a"]'
             try:
-                page.wait_for_selector(first_result_selector, state="visible", timeout=20000)
+                page.wait_for_selector(first_result_selector, state="visible", timeout=12000)
             except Exception:
-                if "418.html" in page.url or "home-error" in page.url:
-                    query_slug = f"Magento developer in {city}".replace(" ", "+")
-                    page.goto(f"https://duckduckgo.com/?q={query_slug}", wait_until="domcontentloaded", timeout=25000)
-                    page.wait_for_selector(first_result_selector, state="visible", timeout=20000)
-                else:
-                    raise
+                query_slug = f"Magento developer in {city}".replace(" ", "+")
+                page.goto(f"https://duckduckgo.com/?q={query_slug}", wait_until="domcontentloaded", timeout=25000)
+                page.wait_for_selector(first_result_selector, state="visible", timeout=20000)
             time.sleep(1.0)
 
             first_result = page.locator(first_result_selector).first
@@ -327,6 +393,12 @@ def CaptureVideo_Magento(
 
     except Exception as e:
         print(f"Error processing {company_name}: {e}")
+        safe_name = "".join(c for c in company_name if c.isalnum() or c in (" ", "-", "_")).strip()
+        if page:
+            try:
+                page.screenshot(path=str(output_dir / f"debug_error_{safe_name or 'unknown'}.png"))
+            except Exception:
+                pass
         if context:
             try:
                 context.close()
