@@ -256,8 +256,14 @@ def CaptureVideo_Magento(
                         break
             if custom_bin:
                 launch_args["executable_path"] = custom_bin
+            else:
+                launch_args["channel"] = "chromium"
 
-            browser = pw.chromium.launch(**launch_args)
+            try:
+                browser = pw.chromium.launch(**launch_args)
+            except Exception:
+                launch_args.pop("channel", None)
+                browser = pw.chromium.launch(**launch_args)
 
             probe_page = browser.new_page()
             native_ua = probe_page.evaluate("navigator.userAgent").replace("HeadlessChrome", "Chrome")
