@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Video Gallery</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0f172a;
+            color: #f8fafc;
+            margin: 0;
+            padding: 2rem;
+        }
+        .container {
+            max-width: 1280px;
+            margin: 0 auto;
+        }
+        h1 {
+            margin-bottom: 0.5rem;
+            font-size: 2rem;
+        }
+        p.subtitle {
+            color: #94a3b8;
+            margin-top: 0;
+            margin-bottom: 2rem;
+            font-size: 1.05rem;
+        }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(560px, 1fr));
+            gap: 2rem;
+        }
+        .card {
+            background: #1e293b;
+            border-radius: 12px;
+            overflow: hidden;
+            border: 1px solid #334155;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -2px rgba(0, 0, 0, 0.3);
+        }
+        .card video {
+            width: 100%;
+            aspect-ratio: 16 / 9;
+            display: block;
+            background: #000;
+            border-bottom: 1px solid #334155;
+        }
+        .card-body {
+            padding: 1.25rem;
+        }
+        .card-title {
+            font-size: 1.25rem;
+            font-weight: 600;
+            margin: 0 0 0.5rem;
+            color: #f1f5f9;
+        }
+        .card-meta {
+            font-size: 0.9rem;
+            color: #94a3b8;
+            margin-bottom: 0.75rem;
+        }
+        .card a {
+            color: #38bdf8;
+            text-decoration: none;
+            font-weight: 500;
+            font-size: 0.95rem;
+        }
+        .card a:hover {
+            text-decoration: underline;
+        }
+        .empty {
+            text-align: center;
+            color: #94a3b8;
+            padding: 4rem 2rem;
+            background: #1e293b;
+            border-radius: 12px;
+            font-size: 1.1rem;
+        }
+        code {
+            background: #0f172a;
+            padding: 0.2rem 0.4rem;
+            border-radius: 4px;
+            color: #38bdf8;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Recorded Videos</h1>
+        {% if videos %}
+        <div class="grid">
+            {% for v in videos %}
+            <div class="card">
+                <video controls preload="metadata" src="{{ v.video_url }}"></video>
+                <div class="card-body">
+                    <div class="card-title">{{ v.company_name }}</div>
+                    <div class="card-meta">Updated: {{ v.updated_at }}</div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="empty">No videos uploaded yet. Run <code>capture_video.py --server ...</code> to upload.</div>
+        {% endif %}
+    </div>
+    <script>
+        let lastCount = {{ videos|length }};
+        setInterval(async () => {
+            try {
+                const res = await fetch('/videos');
+                const data = await res.json();
+                if (data.videos && data.videos.length !== lastCount) {
+                    const isPlaying = Array.from(document.querySelectorAll('video')).some(v => !v.paused && v.currentTime > 0);
+                    if (!isPlaying) {
+                        location.reload();
+                    }
+                }
+            } catch (e) {}
+        }, 3000);
+    </script>
+</body>
+</html>

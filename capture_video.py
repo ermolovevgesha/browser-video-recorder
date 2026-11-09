@@ -2,11 +2,19 @@ from __future__ import annotations
 
 import argparse
 import csv
+import logging
 import sys
 import time
 from pathlib import Path
 
 import qscript
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%H:%M:%S",
+)
+logger = logging.getLogger(__name__)
 
 
 def preview_video(video_url: str, view_seconds: float) -> None:
@@ -59,7 +67,7 @@ def main() -> None:
 
     csv_path = Path(args.csv)
     if not csv_path.exists():
-        print(f"File not found: {csv_path}", file=sys.stderr)
+        logger.error("File not found: %s", csv_path)
         sys.exit(1)
 
     video_client = None
@@ -69,14 +77,14 @@ def main() -> None:
 
             video_client = vc
         except ImportError as e:
-            print(f"Failed to import video_client: {e}", file=sys.stderr)
+            logger.error("Failed to import video_client: %s", e)
             sys.exit(1)
 
     with open(csv_path, mode="r", encoding="utf-8") as f:
         reader = csv.DictReader(f, delimiter=";", quotechar='"')
         for i, row in enumerate(reader, start=1):
             company = row.get("Company Name", f"Company_{i}")
-            print(f"[{i}] Processing: {company}...")
+            logger.info("[%d] Processing: %s...", i, company)
 
             video_path = qscript.CaptureVideo_Magento(
                 url=row.get("URL", "https://duckduckgo.com"),
@@ -90,19 +98,19 @@ def main() -> None:
             )
 
             if video_path:
-                print(f"Saved: {video_path}")
+                logger.info("Saved: %s", video_path)
                 if video_client and args.server:
                     try:
                         video_url = video_client.UploadVideo(args.server, video_path, company)
-                        print(f"Uploaded: {video_url}")
+                        logger.info("Uploaded: %s", video_url)
                         try:
                             preview_video(video_url, args.view_seconds)
                         except Exception as e:
-                            print(f"Failed to preview video: {e}")
+                            logger.error("Failed to preview video: %s", e)
                     except Exception as e:
-                        print(f"Failed to upload video for {company}: {e}")
+                        logger.error("Failed to upload video for %s: %s", company, e)
             else:
-                print(f"Failed to record for {company}")
+                logger.error("Failed to record for %s", company)
 
             time.sleep(1.5)
 

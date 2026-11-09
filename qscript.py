@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 import random
 import shutil
-import sys
 import time
 from pathlib import Path
 

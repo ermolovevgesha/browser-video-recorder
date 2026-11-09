@@ -1,12 +1,20 @@
 from __future__ import annotations
 
+import logging
 import os
 import re
 from pathlib import Path
 
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, render_template, request, send_from_directory
 
 from db import close_db, get_all_videos, get_video, init_db, save_video
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%H:%M:%S",
+)
+logger = logging.getLogger(__name__)
 
 BASE_DIR = Path(__file__).resolve().parent
 UPLOAD_FOLDER = BASE_DIR / "uploads"
@@ -21,6 +29,11 @@ def sanitize_filename(name: str) -> str:
     clean = re.sub(r"[^\w\-_.]", "_", name.strip())
     clean = re.sub(r"_+", "_", clean)
     return clean or "video"
+
+
+@app.route("/", methods=["GET"])
+def index():
+    return render_template("index.html", videos=get_all_videos())
 
 
 @app.route("/upload", methods=["POST"])
@@ -49,6 +62,7 @@ def upload_video():
     video_url = f"{host_url}/media/{filename}"
 
     save_video(company_name, str(dest_path), video_url)
+    logger.info("Uploaded video for '%s' -> %s", company_name, video_url)
 
     return jsonify({"company_name": company_name, "video_url": video_url}), 200
 
@@ -61,8 +75,10 @@ def get_video_url():
 
     video = get_video(company_name)
     if not video:
+        logger.warning("Company not found: '%s'", company_name)
         return jsonify({"error": f"Company '{company_name}' not found"}), 404
 
+    logger.info("Found video URL for '%s'", company_name)
     return jsonify({"company_name": video["company_name"], "video_url": video["video_url"]}), 200
 
 
@@ -78,8 +94,10 @@ def list_videos():
 
 def main() -> None:
     init_db()
+    UPLOAD_FOLDER.mkdir(parents=True, exist_ok=True)
     host = os.environ.get("FLASK_HOST", "0.0.0.0")
     port = int(os.environ.get("FLASK_PORT", "8000"))
+    logger.info("Starting web service on %s:%d", host, port)
     app.run(host=host, port=port, debug=False)
 
 

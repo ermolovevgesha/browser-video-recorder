@@ -10,21 +10,6 @@ BASE_DIR = Path(__file__).resolve().parent
 DATABASE_PATH = BASE_DIR / "videos.db"
 
 
-def get_db() -> sqlite3.Connection:
-    if "db" not in g:
-        g.db = sqlite3.connect(DATABASE_PATH, timeout=10.0)
-        g.db.row_factory = sqlite3.Row
-        g.db.execute("PRAGMA journal_mode=WAL;")
-        g.db.execute("PRAGMA busy_timeout=5000;")
-    return g.db
-
-
-def close_db(exception: BaseException | None = None) -> None:
-    db = g.pop("db", None)
-    if db is not None:
-        db.close()
-
-
 def init_db() -> None:
     with sqlite3.connect(DATABASE_PATH, timeout=10.0) as conn:
         conn.execute("PRAGMA journal_mode=WAL;")
@@ -42,6 +27,22 @@ def init_db() -> None:
             """
         )
         conn.commit()
+
+
+def get_db() -> sqlite3.Connection:
+    if "db" not in g:
+        init_db()
+        g.db = sqlite3.connect(DATABASE_PATH, timeout=10.0)
+        g.db.row_factory = sqlite3.Row
+        g.db.execute("PRAGMA journal_mode=WAL;")
+        g.db.execute("PRAGMA busy_timeout=5000;")
+    return g.db
+
+
+def close_db(exception: BaseException | None = None) -> None:
+    db = g.pop("db", None)
+    if db is not None:
+        db.close()
 
 
 def save_video(company_name: str, file_path: str, video_url: str) -> None:
