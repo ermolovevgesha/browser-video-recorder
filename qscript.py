@@ -9,6 +9,7 @@ from pathlib import Path
 from playwright.sync_api import Page, sync_playwright
 
 PATH_TO_VIDEO_FOLDER = "./video"
+HEADLESS: bool = True
 
 current_page: Page | None = None
 
@@ -162,14 +163,19 @@ def move_mouse(
     start_y: float,
     target_x: float,
     target_y: float,
-    steps: int = 30,
-    delay: float = 0.015,
+    steps: int = 35,
+    delay: float = 0.012,
 ) -> tuple[float, float]:
+    dist = ((target_x - start_x) ** 2 + (target_y - start_y) ** 2) ** 0.5
+    steps = max(20, min(70, int(dist / 14)))
+    bend = random.uniform(-0.15, 0.15) * dist
+    nx, ny = (-(target_y - start_y) / dist, (target_x - start_x) / dist) if dist else (0.0, 0.0)
+    cx, cy = (start_x + target_x) / 2 + nx * bend, (start_y + target_y) / 2 + ny * bend
     for i in range(1, steps + 1):
         t = i / steps
         ease = t * t * (3 - 2 * t)
-        x = start_x + (target_x - start_x) * ease
-        y = start_y + (target_y - start_y) * ease
+        x = (1 - ease) ** 2 * start_x + 2 * (1 - ease) * ease * cx + ease * ease * target_x
+        y = (1 - ease) ** 2 * start_y + 2 * (1 - ease) * ease * cy + ease * ease * target_y
         page.mouse.move(x, y)
         time.sleep(delay)
     return target_x, target_y
@@ -239,8 +245,12 @@ def CaptureVideo_Magento(
 
     try:
         with sync_playwright() as pw:
+            headless_val = HEADLESS
+            if os.environ.get("HEADLESS") is not None:
+                headless_val = os.environ.get("HEADLESS", "1") not in ("0", "false", "False", "no")
+
             launch_args = {
-                "headless": True,
+                "headless": headless_val,
                 "args": [
                     "--disable-blink-features=AutomationControlled",
                     "--no-sandbox",
@@ -268,12 +278,18 @@ def CaptureVideo_Magento(
             native_ua = probe_page.evaluate("navigator.userAgent").replace("HeadlessChrome", "Chrome")
             probe_page.close()
 
+            locale_val = "en-US"
+            if language:
+                clean_lang = language.strip().replace("_", "-")
+                locale_val = clean_lang if "-" in clean_lang else f"{clean_lang}-US"
+
             context = browser.new_context(
                 record_video_dir=str(output_dir),
                 record_video_size={"width": 1280, "height": 720},
                 viewport={"width": 1280, "height": 720},
                 user_agent=native_ua,
-                locale="en-US",
+                locale=locale_val,
+                bypass_csp=True,
             )
             context.add_init_script(CURSOR_SCRIPT)
 
@@ -334,17 +350,23 @@ def CaptureVideo_Magento(
                 page.keyboard.press("Enter")
 
             first_result_selector = 'a[data-testid="result-title-a"]'
-            for _ in range(3):
+            for attempt_wait in range(3):
                 try:
-                    page.wait_for_selector(first_result_selector, state="visible", timeout=20000)
+                    page.wait_for_selector(first_result_selector, state="visible", timeout=15000)
                     break
                 except Exception as e:
                     if "context was destroyed" in str(e).lower() or "navigation" in str(e).lower():
                         time.sleep(1.0)
                         continue
-                    page.keyboard.press("Enter")
-                    page.wait_for_selector(first_result_selector, state="visible", timeout=15000)
-                    break
+                    if attempt_wait == 1:
+                        # DuckDuckGo sometimes loads a blank page; reload it
+                        try:
+                            page.reload(wait_until="domcontentloaded", timeout=15000)
+                        except Exception:
+                            pass
+                    else:
+                        page.keyboard.press("Enter")
+                    time.sleep(1.0)
             time.sleep(1.0)
 
             first_result = page.locator(first_result_selector).first
@@ -388,6 +410,7 @@ def CaptureVideo_Magento(
     except Exception as e:
         print(f"Error processing {company_name}: {e}")
         safe_name = "".join(c for c in company_name if c.isalnum() or c in (" ", "-", "_")).strip()
+        failed_path = output_dir / f"{safe_name or 'video'}_FAILED.webm"
         if page:
             try:
                 page.screenshot(path=str(output_dir / f"debug_error_{safe_name or 'unknown'}.png"))
@@ -402,7 +425,10 @@ def CaptureVideo_Magento(
             try:
                 raw = page.video.path()
                 if os.path.exists(raw):
-                    os.unlink(raw)
+                    if failed_path.exists():
+                        failed_path.unlink()
+                    shutil.move(raw, failed_path)
+                    print(f"Preserved failed attempt video: {failed_path}")
             except Exception:
                 pass
         if browser:

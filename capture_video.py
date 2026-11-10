@@ -7,7 +7,10 @@ import sys
 import time
 from pathlib import Path
 
+from playwright.sync_api import sync_playwright
+
 import qscript
+import video_client
 
 logging.basicConfig(
     level=logging.INFO,
@@ -18,8 +21,6 @@ logger = logging.getLogger(__name__)
 
 
 def preview_video(video_url: str, view_seconds: float) -> None:
-    from playwright.sync_api import sync_playwright
-
     with sync_playwright() as pw:
         launch_args = {"headless": False}
         custom_bin = None
@@ -43,12 +44,24 @@ def preview_video(video_url: str, view_seconds: float) -> None:
             browser = pw.chromium.launch(**launch_args)
 
         page = browser.new_page()
-        page.goto(video_url)
+        page.goto(video_url, wait_until="domcontentloaded")
+
+        try:
+            page.wait_for_function(
+                "() => { const v = document.querySelector('video'); return !!v && v.readyState >= 2; }",
+                timeout=12000,
+            )
+            logger.info("Preview: video is ready and playing")
+        except Exception:
+            logger.warning("Preview: video did not reach ready state within timeout, displaying anyway")
 
         if view_seconds > 0:
             time.sleep(view_seconds)
         else:
-            input("Press Enter to continue to next company...")
+            try:
+                input("Press Enter to continue to next company...")
+            except EOFError:
+                logger.warning("No interactive terminal available to read Enter; continuing...")
 
         browser.close()
 
@@ -70,49 +83,56 @@ def main() -> None:
         logger.error("File not found: %s", csv_path)
         sys.exit(1)
 
-    video_client = None
-    if args.server:
-        try:
-            import video_client as vc
-
-            video_client = vc
-        except ImportError as e:
-            logger.error("Failed to import video_client: %s", e)
-            sys.exit(1)
-
-    with open(csv_path, mode="r", encoding="utf-8") as f:
+    with open(csv_path, mode="r", encoding="utf-8-sig") as f:
         reader = csv.DictReader(f, delimiter=";", quotechar='"')
-        for i, row in enumerate(reader, start=1):
-            company = row.get("Company Name", f"Company_{i}")
-            logger.info("[%d] Processing: %s...", i, company)
+        rows = [{k.strip(): (v or "").strip() for k, v in row.items() if k} for row in reader]
 
-            video_path = qscript.CaptureVideo_Magento(
-                url=row.get("URL", "https://duckduckgo.com"),
-                company_name=company,
-                language=row.get("Language", "en"),
-                country=row.get("Country", ""),
-                postcode=row.get("Postcode", ""),
-                city=row.get("City", ""),
-                street=row.get("Street", ""),
-                house_no=row.get("HouseNo", ""),
-            )
+    ok_count = 0
+    failed_count = 0
+    uploaded_count = 0
 
-            if video_path:
-                logger.info("Saved: %s", video_path)
-                if video_client and args.server:
+    for i, row in enumerate(rows, start=1):
+        company = row.get("Company Name", f"Company_{i}")
+        logger.info("[%d/%d] Processing: %s...", i, len(rows), company)
+
+        video_path = qscript.CaptureVideo_Magento(
+            url=row.get("URL", "https://duckduckgo.com"),
+            company_name=company,
+            language=row.get("Language", "en"),
+            country=row.get("Country", ""),
+            postcode=row.get("Postcode", ""),
+            city=row.get("City", ""),
+            street=row.get("Street", ""),
+            house_no=row.get("HouseNo", ""),
+        )
+
+        if video_path:
+            ok_count += 1
+            logger.info("Saved: %s", video_path)
+            if args.server:
+                try:
+                    video_url = video_client.UploadVideo(args.server, video_path, company)
+                    uploaded_count += 1
+                    logger.info("Uploaded: %s", video_url)
                     try:
-                        video_url = video_client.UploadVideo(args.server, video_path, company)
-                        logger.info("Uploaded: %s", video_url)
-                        try:
-                            preview_video(video_url, args.view_seconds)
-                        except Exception as e:
-                            logger.error("Failed to preview video: %s", e)
+                        preview_video(video_url, args.view_seconds)
                     except Exception as e:
-                        logger.error("Failed to upload video for %s: %s", company, e)
-            else:
-                logger.error("Failed to record for %s", company)
+                        logger.error("Failed to preview video: %s", e)
+                except Exception as e:
+                    logger.error("Failed to upload video for %s: %s", company, e)
+        else:
+            failed_count += 1
+            logger.error("Failed to record for %s", company)
 
-            time.sleep(1.5)
+        time.sleep(1.5)
+
+    summary = f"Done: {ok_count} ok, {failed_count} failed"
+    if args.server:
+        summary += f"; uploaded: {uploaded_count}"
+    logger.info(summary)
+
+    if failed_count > 0:
+        sys.exit(1)
 
 
 if __name__ == "__main__":

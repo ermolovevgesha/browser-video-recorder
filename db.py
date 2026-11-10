@@ -4,7 +4,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from flask import g
+from flask import g, has_app_context
 
 BASE_DIR = Path(__file__).resolve().parent
 DATABASE_PATH = BASE_DIR / "videos.db"
@@ -30,13 +30,19 @@ def init_db() -> None:
 
 
 def get_db() -> sqlite3.Connection:
-    if "db" not in g:
-        init_db()
-        g.db = sqlite3.connect(DATABASE_PATH, timeout=10.0)
-        g.db.row_factory = sqlite3.Row
-        g.db.execute("PRAGMA journal_mode=WAL;")
-        g.db.execute("PRAGMA busy_timeout=5000;")
-    return g.db
+    if has_app_context():
+        if "db" not in g:
+            g.db = sqlite3.connect(DATABASE_PATH, timeout=10.0)
+            g.db.row_factory = sqlite3.Row
+            g.db.execute("PRAGMA journal_mode=WAL;")
+            g.db.execute("PRAGMA busy_timeout=5000;")
+        return g.db
+
+    conn = sqlite3.connect(DATABASE_PATH, timeout=10.0)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL;")
+    conn.execute("PRAGMA busy_timeout=5000;")
+    return conn
 
 
 def close_db(exception: BaseException | None = None) -> None:
@@ -69,6 +75,16 @@ def get_video(company_name: str) -> dict[str, Any] | None:
     )
     row = cursor.fetchone()
     return dict(row) if row else None
+
+
+def get_company_by_path(file_path: str) -> str | None:
+    db = get_db()
+    cursor = db.execute(
+        "SELECT company_name FROM videos WHERE file_path = ?",
+        (file_path,),
+    )
+    row = cursor.fetchone()
+    return str(row["company_name"]) if row else None
 
 
 def get_all_videos() -> list[dict[str, Any]]:
