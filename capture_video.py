@@ -10,7 +10,6 @@ from pathlib import Path
 from playwright.sync_api import sync_playwright
 
 import qscript
-import video_client
 
 logging.basicConfig(
     level=logging.INFO,
@@ -83,6 +82,14 @@ def main() -> None:
         logger.error("File not found: %s", csv_path)
         sys.exit(1)
 
+    video_client = None
+    if args.server:
+        try:
+            import video_client
+        except ImportError as e:
+            logger.error("Option --server requires 'requests' to be installed: %s", e)
+            sys.exit(1)
+
     with open(csv_path, mode="r", encoding="utf-8-sig") as f:
         reader = csv.DictReader(f, delimiter=";", quotechar='"')
         rows = [{k.strip(): (v or "").strip() for k, v in row.items() if k} for row in reader]
@@ -109,7 +116,7 @@ def main() -> None:
         if video_path:
             ok_count += 1
             logger.info("Saved: %s", video_path)
-            if args.server:
+            if args.server and video_client is not None:
                 try:
                     video_url = video_client.UploadVideo(args.server, video_path, company)
                     uploaded_count += 1
