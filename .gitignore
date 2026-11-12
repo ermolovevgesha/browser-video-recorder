@@ -20,3 +20,7 @@ uploads/
 
 # Task documents
 *.pdf
+
+# Environment files
+.env
+
