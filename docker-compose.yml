@@ -11,6 +11,13 @@ services:
       DB_NAME: ${DB_NAME}
       DB_USER: ${DB_USER}
       DB_PASSWORD: ${DB_PASSWORD}
+      AUTO_PROCESS_ZOOM: ${AUTO_PROCESS_ZOOM:-1}
+      FFMPEG_PATH: ${FFMPEG_PATH:-ffmpeg}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost/videos >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     depends_on:
       db:
         condition: service_healthy

@@ -57,16 +57,7 @@
         .card-meta {
             font-size: 0.9rem;
             color: #94a3b8;
-            margin-bottom: 0.75rem;
-        }
-        .card a {
-            color: #38bdf8;
-            text-decoration: none;
-            font-weight: 500;
-            font-size: 0.95rem;
-        }
-        .card a:hover {
-            text-decoration: underline;
+            margin-bottom: 0;
         }
         .empty {
             text-align: center;
@@ -91,7 +82,7 @@
         <div class="grid">
             {% for v in videos %}
             <div class="card">
-                <video controls autoplay muted loop playsinline preload="metadata" src="{{ v.video_url }}"></video>
+                <video controls autoplay muted loop playsinline preload="metadata" src="{{ v.processed_video_url or v.video_url }}"></video>
                 <div class="card-body">
                     <div class="card-title">{{ v.company_name }}</div>
                     <div class="card-meta">Updated: {{ v.updated_at }}</div>
@@ -104,13 +95,16 @@
         {% endif %}
     </div>
     <script>
-        let lastCount = {{ videos|length }};
+        let lastSnapshot = JSON.stringify({{ videos | map(attribute='video_url') | list | tojson }}) + ':' + JSON.stringify({{ videos | map(attribute='processed_video_url') | list | tojson }}) + ':' + JSON.stringify({{ videos | map(attribute='processing_status') | list | tojson }});
         setInterval(async () => {
             try {
                 const res = await fetch('/videos');
                 const data = await res.json();
-                if (data.videos && data.videos.length !== lastCount) {
-                    location.reload();
+                if (data.videos) {
+                    const snap = JSON.stringify(data.videos.map(v => v.video_url)) + ':' + JSON.stringify(data.videos.map(v => v.processed_video_url)) + ':' + JSON.stringify(data.videos.map(v => v.processing_status));
+                    if (snap !== lastSnapshot) {
+                        location.reload();
+                    }
                 }
             } catch (e) {}
         }, 3000);

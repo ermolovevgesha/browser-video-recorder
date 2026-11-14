@@ -43,10 +43,10 @@ def preview_video(video_url: str, view_seconds: float) -> None:
             browser = pw.chromium.launch(**launch_args)
 
         page = browser.new_page()
-        page.goto(video_url, wait_until="domcontentloaded")
+        _ = page.goto(video_url, wait_until="domcontentloaded")
 
         try:
-            page.wait_for_function(
+            _ = page.wait_for_function(
                 "() => { const v = document.querySelector('video'); return !!v && v.readyState >= 2; }",
                 timeout=12000,
             )
@@ -58,7 +58,7 @@ def preview_video(video_url: str, view_seconds: float) -> None:
             time.sleep(view_seconds)
         else:
             try:
-                input("Press Enter to continue to next company...")
+                _ = input("Press Enter to continue to next company...")
             except EOFError:
                 logger.warning("No interactive terminal available to read Enter; continuing...")
 
@@ -67,13 +67,23 @@ def preview_video(video_url: str, view_seconds: float) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Capture company videos and optionally upload/preview them.")
-    parser.add_argument("--csv", default="input.csv", help="Path to input CSV file (default: input.csv)")
-    parser.add_argument("--server", help="Base URL of web service (e.g. http://localhost:8000)")
-    parser.add_argument(
+    _ = parser.add_argument("--csv", default="input.csv", help="Path to input CSV file (default: input.csv)")
+    _ = parser.add_argument("--server", help="Base URL of web service (e.g. http://localhost:8000)")
+    _ = parser.add_argument(
         "--view-seconds",
         type=float,
         default=5.0,
         help="Seconds to preview video in browser (0 = wait for Enter, default: 5.0)",
+    )
+    _ = parser.add_argument(
+        "--zoom",
+        action="store_true",
+        help="Trigger programmatic zoom-in/out events during recording via window.__zoomAt",
+    )
+    _ = parser.add_argument(
+        "--headed",
+        action="store_true",
+        help="Open a visible browser window so user can move the cursor and press F5 manually",
     )
     args = parser.parse_args()
 
@@ -94,6 +104,13 @@ def main() -> None:
         reader = csv.DictReader(f, delimiter=";", quotechar='"')
         rows = [{k.strip(): (v or "").strip() for k, v in row.items() if k} for row in reader]
 
+    if args.headed:
+        logger.info(
+            "Headed mode enabled: move mouse to aim cursor and press F5 to zoom "
+            "(script pauses while active + %.1fs cooldown)",
+            qscript.USER_MOUSE_COOLDOWN_SEC,
+        )
+
     ok_count = 0
     failed_count = 0
     uploaded_count = 0
@@ -102,16 +119,22 @@ def main() -> None:
         company = row.get("Company Name", f"Company_{i}")
         logger.info("[%d/%d] Processing: %s...", i, len(rows), company)
 
-        video_path = qscript.CaptureVideo_Magento(
-            url=row.get("URL", "https://duckduckgo.com"),
-            company_name=company,
-            language=row.get("Language", "en"),
-            country=row.get("Country", ""),
-            postcode=row.get("Postcode", ""),
-            city=row.get("City", ""),
-            street=row.get("Street", ""),
-            house_no=row.get("HouseNo", ""),
-        )
+        capture_kwargs = {
+            "url": row.get("URL", "https://duckduckgo.com"),
+            "company_name": company,
+            "language": row.get("Language", "en"),
+            "country": row.get("Country", ""),
+            "postcode": row.get("Postcode", ""),
+            "city": row.get("City", ""),
+            "street": row.get("Street", ""),
+            "house_no": row.get("HouseNo", ""),
+        }
+        if args.zoom:
+            capture_kwargs["zoom"] = True
+        if args.headed:
+            capture_kwargs["headless"] = False
+
+        video_path = qscript.CaptureVideo_Magento(**capture_kwargs)
 
         if video_path:
             ok_count += 1

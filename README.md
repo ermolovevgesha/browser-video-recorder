@@ -1,11 +1,11 @@
 # Overview
-A project for automatically recording videos in a browser (Chromium / Playwright) based on a list of companies from a CSV file, uploading the videos to a containerized web service (Apache + mod_wsgi + Flask + PostgreSQL), and viewing them.
+A project for automatically recording videos in a browser (Chromium / Playwright) based on a list of companies from a CSV file, applying smooth zoom post-processing via `ffmpeg`, and uploading videos to a containerized web service.
 
 ## Architecture & Technology Stack
-- **Web Container (`web`)**: Python 3.12, Apache 2.4 + `mod_wsgi`, Flask
+- **Web Container (`web`)**: Python 3.12, Apache 2.4 + `mod_wsgi`, Flask, `ffmpeg`
 - **Database Container (`db`)**: PostgreSQL 16 (`psycopg2`)
 - **Orchestration**: Docker & Docker Compose (with named volumes `db_data` and `uploads` and DB healthcheck)
-- **Video Recorder / Client**: Python 3.9+, Playwright (Chromium), Requests
+- **Video Recorder / Post-processor**: Python 3.9+, Playwright (Chromium), Requests, `ffmpeg` (`zoompan` + `libvpx-vp9`)
 
 ---
 
@@ -19,60 +19,82 @@ cp .env.example .env
 
 ### 2. Build and Start Containers
 ```bash
-docker compose up --build
+docker compose up --build -d
 ```
-*(Or add `-d` to run in detached mode: `docker compose up --build -d`)*
-
-- **`web`** maps host port `8000` to Apache port `80` inside the container (`http://localhost:8000`).
-- **`db`** runs `postgres:16` with a healthcheck (`pg_isready`); `web` waits until `db` is healthy before starting.
-- Uploaded videos are persisted in the `uploads` named volume (`/app/uploads`), and PostgreSQL data is persisted in the `db_data` named volume (`/var/lib/postgresql/data`).
-- Database connection settings (`DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`) are passed via environment variables from `.env`.
-
-### 3. Stop / Restart Containers
-```bash
-docker compose down
-docker compose up
-```
-All database records and uploaded video files survive container restarts and `docker compose down` / `docker compose up`.
-
-### 4. Verify Inside the Container
-```bash
-docker compose exec web curl http://localhost/
-```
+Web gallery: `http://localhost:8000` (data and media persist in Docker volumes `db_data` and `uploads`).
 
 ---
 
-## Local Client Setup (Video Capture & Upload)
+## Local Client Setup (Video Capture, Zoom & Upload)
 
-1. Create and activate a virtual environment:
+1. Create an environment and install client + test dependencies (skipping Docker-only `mod-wsgi`):
+
+Using `uv`:
+```bash
+uv sync
+uv run playwright install chromium
+```
+
+Or with `pip`:
 ```bash
 python -m venv .venv
 .venv\Scripts\activate   # Windows
 # source .venv/bin/activate  # Linux/macOS
+pip install playwright requests flask psycopg2-binary pytest
+playwright install chromium
 ```
 
-2. Install dependencies:
+2. Run video capture with upload and preview against the Dockerized web service:
 ```bash
-pip install -r requirements.txt
-playwright install chromium ffmpeg
-```
+# Automatic programmatic zoom during recording
+python capture_video.py --server http://localhost:8000 --view-seconds 5 --zoom
 
-3. Run video capture with upload and preview against the Dockerized web service:
-```bash
-python capture_video.py --server http://localhost:8000 --view-seconds 5
+# Visible browser window for manual F5 zoom testing
+python capture_video.py --headed --server http://localhost:8000
 ```
 
 Parameters:
-- `--server`: The URL of the web service (`http://localhost:8000`). If not specified, videos are saved only locally in `video/`.
-- `--view-seconds`: Preview duration in seconds (default `5.0`). If set to `0`, the script waits for the Enter key in the console before moving to the next company.
-- `--csv`: Path to the CSV file (default `input.csv`).
+- `--server`: Web service base URL (`http://localhost:8000`). If omitted, videos are saved only locally in `video/`.
+- `--view-seconds`: Preview duration in seconds (default `5.0`; `0` = wait for Enter).
+- `--csv`: Path to CSV file (default `input.csv`).
+- `--zoom`: Enable programmatic zoom-in/out events during the scenario.
+- `--headed`: Open a visible browser window (`HEADLESS=0`) for manual cursor control and `F5` zoom.
+
+### Zoom Behavior (`qscript.py`)
+- **`F5` toggle**: 1st press starts zoom-in (green ring), 2nd press starts zoom-out (orange ring) without reloading the page. If recording ends while zoomed in, zoom holds to the end.
+- **User vs. script cursor (`--headed`)**: User mouse/F5 activity pauses automation (`2.0s` cooldown), then the script smoothly resumes from the user's cursor position.
+- **Programmatic zoom (`ZoomAt` / `window.__zoomAt`)**: Scenario calls use explicit `state="in"` / `state="out"` so manual `F5` presses never invert the script's zoom phase (`window.__zoomAt(x, y)` without state toggles).
+- **Sidecar output**: `<video>.zoom.json` is written next to the `.webm` only when at least one zoom event occurs.
+
+### Standalone Zoom Post-Processing (`apply_zoom.py`)
+```bash
+# Preview the generated ffmpeg command without encoding (works even without local ffmpeg)
+python apply_zoom.py --video "video/Acme E-Commerce.webm" --dry-run
+
+# Render zoomed .webm locally (<stem>_zoomed.webm)
+python apply_zoom.py --video "video/Acme E-Commerce.webm"
+
+# Specify an explicit ffmpeg binary when not on PATH
+python apply_zoom.py --video "video/Acme E-Commerce.webm" --ffmpeg /path/to/ffmpeg
+```
 
 ---
 
 ## Web Service API
 
-- `GET /` — Web interface (video gallery with a built-in HTML5 player).
-- `POST /upload` — video upload (`multipart/form-data` with `file` and `company_name` fields). Returns `{"company_name": "...", "video_url": "..."}`.
-- `GET /get_video_url?company_name=...` — retrieves the video URL for a specified company.
-- `GET /media/<filename>` — serves uploaded video files directly via Apache `Alias /media /app/uploads` (or Flask fallback when running standalone).
+- `GET /` — Web interface (video gallery displaying zoomed videos when processed).
+- `POST /upload` — video upload (`multipart/form-data` with `file`, `company_name`, and optional `sidecar` `.zoom.json`). When a sidecar is provided, creates a processing job and automatically starts zoom post-processing in the background (or synchronously with `?sync=1`).
+- `POST /jobs/<id>/process` — runs (or re-runs) zoom post-processing for job `<id>`, storing `processed_video_url` in PostgreSQL (`jobs` and `videos` tables). Supports optional `sidecar` upload and `?async=1`.
+- `POST /videos/<id>/process` — creates and runs a zoom post-processing job for video `<id>`.
+- `GET /jobs` / `GET /jobs/<id>` — returns all jobs or status/URL details for a specific job.
+- `GET /get_video_url?company_name=...` — retrieves `video_url`, `processed_video_url`, `processing_status`, and `job_id` for a company.
+- `GET /media/<filename>` — serves uploaded and processed video files directly via Apache `Alias /media /app/uploads` (or Flask fallback when running standalone).
 - `GET /videos` — returns a list of all registered videos in JSON.
+
+---
+
+## Running Tests
+
+```bash
+uv run pytest -v   # or pytest -v inside an activated .venv
+```

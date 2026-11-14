@@ -27,6 +27,7 @@ ENV PATH="/opt/venv/bin:$PATH" \
 RUN apt-get update && apt-get install -y --no-install-recommends \
     apache2 \
     curl \
+    ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -36,14 +37,14 @@ COPY --from=builder /opt/venv /opt/venv
 RUN /opt/venv/bin/mod_wsgi-express module-config > /etc/apache2/mods-available/wsgi.load \
     && a2enmod wsgi \
     && echo "ServerName localhost" >> /etc/apache2/apache2.conf \
-    && echo "PassEnv DB_HOST DB_PORT DB_NAME DB_USER DB_PASSWORD" >> /etc/apache2/conf-available/passenv.conf \
+    && echo "PassEnv DB_HOST DB_PORT DB_NAME DB_USER DB_PASSWORD AUTO_PROCESS_ZOOM FFMPEG_PATH" >> /etc/apache2/conf-available/passenv.conf \
     && a2enconf passenv \
     && a2dissite 000-default.conf
 
 COPY apache-vhost.conf /etc/apache2/sites-available/web_service.conf
 RUN a2ensite web_service.conf
 
-COPY db.py web_service.py web_service.wsgi ./
+COPY apply_zoom.py db.py web_service.py web_service.wsgi ./
 COPY templates ./templates
 
 RUN mkdir -p /app/uploads && chown -R www-data:www-data /app
