@@ -64,7 +64,7 @@ Parameters:
 - **`F5` toggle**: 1st press starts zoom-in (green ring), 2nd press starts zoom-out (orange ring) without reloading the page. If recording ends while zoomed in, zoom holds to the end.
 - **User vs. script cursor (`--headed`)**: User mouse/F5 activity pauses automation (`2.0s` cooldown), then the script smoothly resumes from the user's cursor position.
 - **Programmatic zoom (`ZoomAt` / `window.__zoomAt`)**: Scenario calls use explicit `state="in"` / `state="out"` so manual `F5` presses never invert the script's zoom phase (`window.__zoomAt(x, y)` without state toggles).
-- **Sidecar output**: `<video>.zoom.json` is written next to the `.webm` only when at least one zoom event occurs.
+- **Timeline sync & sidecar**: Each zoom event flashes a `6×6` px top-left sync marker so `qscript.py` aligns timestamps to Playwright's actual first recorded frame before writing `<video>.zoom.json` (written only when events exist).
 
 ### Standalone Zoom Post-Processing (`apply_zoom.py`)
 ```bash

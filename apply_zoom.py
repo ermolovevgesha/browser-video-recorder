@@ -5,6 +5,7 @@ import json
 import logging
 import math
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -22,6 +23,7 @@ DEFAULT_VIEWPORT_HEIGHT = 720
 DEFAULT_FPS = 25.0
 DEFAULT_ZOOM_FACTOR = 2.0
 DEFAULT_RAMP_SEC = 0.5
+DEFAULT_SUPERSAMPLE = 2
 
 
 @dataclass(frozen=True)
@@ -404,19 +406,21 @@ def build_zoompan_filter(
     width: int,
     height: int,
     fps: float | None = None,
+    supersample: int = DEFAULT_SUPERSAMPLE,
 ) -> str | None:
     eff_fps = float(fps if fps is not None else sidecar.fps)
     segments = build_segments(sidecar, width, height, eff_fps)
     if not segments or sidecar.zoom_factor <= 1.0:
         return None
 
+    k = max(1, int(supersample))
     ramp_frames = compute_ramp_frames(sidecar.ramp_sec, eff_fps)
     delta_exprs = [_build_segment_delta_expr(seg, sidecar.zoom_factor, ramp_frames) for seg in segments]
     z_expr = "1+" + "+".join(delta_exprs)
 
     if len(segments) == 1:
-        px_expr = _fmt_num(segments[0].x)
-        py_expr = _fmt_num(segments[0].y)
+        px_expr = _fmt_num(segments[0].x * k)
+        py_expr = _fmt_num(segments[0].y * k)
     else:
         px_expr = "iw/2"
         py_expr = "ih/2"
@@ -425,13 +429,19 @@ def build_zoompan_filter(
                 cond = f"gte(on,{seg.in_frame})"
             else:
                 cond = f"between(on,{seg.in_frame},{seg.end_frame})"
-            px_expr = f"if({cond},{_fmt_num(seg.x)},{px_expr})"
-            py_expr = f"if({cond},{_fmt_num(seg.y)},{py_expr})"
+            px_expr = f"if({cond},{_fmt_num(seg.x * k)},{px_expr})"
+            py_expr = f"if({cond},{_fmt_num(seg.y * k)},{py_expr})"
 
     x_expr = f"clip({px_expr}-iw/(2*zoom),0,iw-iw/zoom)"
     y_expr = f"clip({py_expr}-ih/(2*zoom),0,ih-ih/zoom)"
     fps_s = _fmt_num(eff_fps)
-    return f"zoompan=z='{z_expr}':x='{x_expr}':y='{y_expr}':d=1:s={width}x{height}:fps={fps_s}"
+
+    parts = ["setpts=PTS-STARTPTS", f"fps={fps_s}"]
+    if k > 1:
+        parts.append(f"scale={width * k}:{height * k}:flags=lanczos")
+    parts.append(f"zoompan=z='{z_expr}':x='{x_expr}':y='{y_expr}':d=1:s={width}x{height}:fps={fps_s}")
+    parts.append("format=yuv420p")
+    return ",".join(parts)
 
 
 def resolve_ffmpeg(ffmpeg_arg: str | None = None, require: bool = True) -> str:
@@ -465,9 +475,42 @@ def resolve_ffprobe(ffmpeg_bin: str) -> str | None:
     return shutil.which("ffprobe")
 
 
-def probe_video(video_path: Path, ffprobe_bin: str | None) -> VideoInfo | None:
-    if not ffprobe_bin or not video_path.is_file():
+def _parse_rate(rate_str: Any) -> float:
+    if not rate_str:
+        return 0.0
+    try:
+        text = str(rate_str).strip()
+        return float(Fraction(text)) if "/" in text else float(text)
+    except Exception:
+        return 0.0
+
+
+def _probe_via_ffmpeg_stderr(video_path: Path, ffmpeg_bin: str) -> VideoInfo | None:
+    try:
+        res = subprocess.run(
+            [ffmpeg_bin, "-hide_banner", "-nostdin", "-i", str(video_path)],
+            capture_output=True,
+            text=True,
+            errors="replace",
+            check=False,
+        )
+    except Exception:
         return None
+    m_size = re.search(r"Stream #\S+.*?: Video: .*?(\d{2,5})x(\d{2,5})", res.stderr)
+    if not m_size:
+        return None
+    m_fps = re.search(r"(\d+(?:\.\d+)?)\s*(?:fps|tbr)\b", res.stderr)
+    fps = float(m_fps.group(1)) if m_fps else DEFAULT_FPS
+    if fps <= 0 or fps > 120:
+        fps = DEFAULT_FPS
+    return VideoInfo(width=int(m_size.group(1)), height=int(m_size.group(2)), fps=fps)
+
+
+def probe_video(video_path: Path, ffprobe_bin: str | None, ffmpeg_bin: str | None = None) -> VideoInfo | None:
+    if not video_path.is_file():
+        return None
+    if not ffprobe_bin:
+        return _probe_via_ffmpeg_stderr(video_path, ffmpeg_bin) if ffmpeg_bin else None
 
     cmd = [
         ffprobe_bin,
@@ -486,7 +529,7 @@ def probe_video(video_path: Path, ffprobe_bin: str | None) -> VideoInfo | None:
     result = subprocess.run(cmd, capture_output=True, text=True, check=False)
     if result.returncode != 0:
         logger.warning("ffprobe failed for %s: %s", video_path, result.stderr.strip())
-        return None
+        return _probe_via_ffmpeg_stderr(video_path, ffmpeg_bin) if ffmpeg_bin else None
 
     try:
         payload = json.loads(result.stdout)
@@ -496,16 +539,20 @@ def probe_video(video_path: Path, ffprobe_bin: str | None) -> VideoInfo | None:
         stream = streams[0]
         width = int(stream["width"])
         height = int(stream["height"])
-        rate_str = stream.get("r_frame_rate") or stream.get("avg_frame_rate") or "25/1"
-        fps = float(Fraction(rate_str)) if "/" in str(rate_str) else float(rate_str)
-        if fps <= 0:
+        r_fps = _parse_rate(stream.get("r_frame_rate"))
+        avg_fps = _parse_rate(stream.get("avg_frame_rate"))
+        if 0 < r_fps <= 120:
+            fps = r_fps
+        elif 0 < avg_fps <= 120:
+            fps = avg_fps
+        else:
             fps = DEFAULT_FPS
         raw_dur = (payload.get("format") or {}).get("duration")
         duration = float(raw_dur) if raw_dur not in (None, "N/A", "") else None
         return VideoInfo(width=width, height=height, fps=fps, duration=duration)
     except Exception as exc:
         logger.warning("Could not parse ffprobe output for %s: %s", video_path, exc)
-        return None
+        return _probe_via_ffmpeg_stderr(video_path, ffmpeg_bin) if ffmpeg_bin else None
 
 
 def default_output_path(video_path: Path) -> Path:
@@ -568,6 +615,7 @@ def process_video(
     sidecar_path: str | Path | None = None,
     ffmpeg_path: str | None = None,
     dry_run: bool = False,
+    supersample: int = DEFAULT_SUPERSAMPLE,
 ) -> tuple[Path, list[str] | None]:
     src = Path(video_path)
     if not dry_run and not src.is_file():
@@ -594,13 +642,13 @@ def process_video(
 
     ffmpeg_bin = resolve_ffmpeg(ffmpeg_path, require=not dry_run)
     ffprobe_bin = resolve_ffprobe(ffmpeg_bin)
-    info = probe_video(src, ffprobe_bin)
+    info = probe_video(src, ffprobe_bin, ffmpeg_bin=None if dry_run else ffmpeg_bin)
 
     width = info.width if info else sidecar.viewport_width
     height = info.height if info else sidecar.viewport_height
     fps = info.fps if info else sidecar.fps
 
-    vf_filter = build_zoompan_filter(sidecar, width=width, height=height, fps=fps)
+    vf_filter = build_zoompan_filter(sidecar, width=width, height=height, fps=fps, supersample=supersample)
     if vf_filter is None:
         if dry_run:
             return dst, None

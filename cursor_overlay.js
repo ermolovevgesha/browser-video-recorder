@@ -185,6 +185,27 @@
     window.__zoomT0 = performance.now();
   }
 
+  function showSyncMark() {
+    const host = document.body || document.documentElement;
+    if (!host) return;
+    const mark = document.createElement('div');
+    mark.dataset.zoomSyncMark = '1';
+    Object.assign(mark.style, {
+      position: 'fixed',
+      left: '0px',
+      top: '0px',
+      width: '6px',
+      height: '6px',
+      margin: '0',
+      padding: '0',
+      background: 'rgb(255, 0, 255)',
+      pointerEvents: 'none',
+      zIndex: '2147483647',
+    });
+    host.appendChild(mark);
+    setTimeout(() => mark.remove(), 240);
+  }
+
   function showZoomIndicator(x, y, eventType) {
     initCursor();
     const layer = document.getElementById('cursor-layer');
@@ -231,6 +252,7 @@
       });
     }
     if (eventType) {
+      showSyncMark();
       showZoomIndicator(cx, cy, eventType);
     }
     return eventType;

@@ -1,15 +1,22 @@
 from __future__ import annotations
 
+import glob
 import json
+import logging
 import os
 import random
 import shutil
+import subprocess
+import tempfile
 import time
+import zlib
 from pathlib import Path
 from typing import Any
 from weakref import WeakKeyDictionary
 
 from playwright.sync_api import Page, sync_playwright
+
+logger = logging.getLogger(__name__)
 
 PATH_TO_VIDEO_FOLDER = "./video"
 HEADLESS: bool = True
@@ -20,6 +27,7 @@ RECORDING_FPS = 25
 DEFAULT_ZOOM_FACTOR = 2.0
 DEFAULT_RAMP_SEC = 0.5
 USER_MOUSE_COOLDOWN_SEC = 2.0
+SYNC_COLOUR = (255, 0, 255)
 
 current_page: Page | None = None
 
@@ -57,6 +65,121 @@ def get_activity_tracker(page: Any) -> UserActivityTracker | None:
     return _PAGE_TRACKERS.get(page) if page is not None else None
 
 
+def find_ffmpeg(ffmpeg_path: str | None = None) -> str | None:
+    candidate = ffmpeg_path or os.environ.get("FFMPEG_PATH")
+    if candidate:
+        cand_path = Path(candidate)
+        if cand_path.is_file() and (os.name == "nt" or os.access(cand_path, os.X_OK)):
+            return str(cand_path)
+        found = shutil.which(candidate)
+        if found:
+            return found
+
+    exe = shutil.which("ffmpeg")
+    if exe:
+        return exe
+
+    roots = [
+        os.environ.get("PLAYWRIGHT_BROWSERS_PATH"),
+        os.path.expanduser("~/Library/Caches/ms-playwright"),
+        os.path.expanduser("~/.cache/ms-playwright"),
+        os.path.join(os.environ.get("LOCALAPPDATA", ""), "ms-playwright"),
+    ]
+    for root in filter(None, roots):
+        for path in sorted(glob.glob(os.path.join(root, "ffmpeg-*", "ffmpeg*")), reverse=True):
+            name = Path(path).name
+            if not name.startswith("ffmpeg"):
+                continue
+            if os.path.isfile(path) and (os.name == "nt" or os.access(path, os.X_OK)):
+                return path
+    return None
+
+
+def _png_rgb(data: bytes) -> tuple[int, int, int]:
+    pos, idat, colour_type = 8, bytearray(), 2
+    while pos + 8 <= len(data):
+        length = int.from_bytes(data[pos:pos + 4], "big")
+        kind = data[pos + 4:pos + 8]
+        body_start = pos + 8
+        body_end = body_start + length
+        if body_end + 4 > len(data):
+            break
+        body = data[body_start:body_end]
+        if kind == b"IHDR" and len(body) >= 10:
+            colour_type = body[9]
+        elif kind == b"IDAT":
+            idat.extend(body)
+        elif kind == b"IEND":
+            break
+        pos = body_end + 4
+    row = zlib.decompress(bytes(idat))
+    if colour_type in (2, 6):
+        return int(row[1]), int(row[2]), int(row[3])
+    gray = int(row[1])
+    return gray, gray, gray
+
+
+def sync_marker_times(
+    video_path: str | Path,
+    ffmpeg_bin: str,
+    fps: float = RECORDING_FPS,
+) -> list[float]:
+    with tempfile.TemporaryDirectory(prefix="qsync_") as tmp_dir:
+        pattern = os.path.join(tmp_dir, "%06d.png")
+        subprocess.run(
+            [
+                ffmpeg_bin,
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-nostdin",
+                "-i",
+                str(video_path),
+                "-r",
+                str(fps),
+                "-vf",
+                "crop=2:2:2:2,scale=1:1",
+                "-pix_fmt",
+                "rgb24",
+                "-f",
+                "image2",
+                pattern,
+            ],
+            check=True,
+            capture_output=True,
+            timeout=300,
+        )
+        frames = sorted(os.listdir(tmp_dir))
+        times: list[float] = []
+        prev_hit = False
+        for idx, name in enumerate(frames):
+            rgb = _png_rgb(Path(tmp_dir, name).read_bytes())
+            hit = all(abs(c - s) < 70 for c, s in zip(rgb, SYNC_COLOUR))
+            if hit and not prev_hit:
+                times.append(idx / float(fps))
+            prev_hit = hit
+    return times
+
+
+def estimate_offset(
+    event_times: list[float],
+    marker_times: list[float],
+    window: tuple[float, float] = (-15.0, 2.0),
+    tol: float = 0.12,
+) -> float | None:
+    diffs = sorted(
+        m - e
+        for e in event_times
+        for m in marker_times
+        if window[0] <= m - e <= window[1]
+    )
+    if not diffs:
+        return None
+    best = max(diffs, key=lambda d: (sum(abs(x - d) <= tol for x in diffs), -abs(d)))
+    close = sorted(x for x in diffs if abs(x - best) <= tol)
+    return close[len(close) // 2]
+
+
 class ZoomEventRecorder:
     def __init__(
         self,
@@ -78,6 +201,9 @@ class ZoomEventRecorder:
         self.start_epoch_ms = (time.time() * 1000.0) if start_epoch_ms is None else start_epoch_ms
         self.activity_tracker = activity_tracker
         self.events: list[dict[str, Any]] = []
+        self._raw_times: list[float] = []
+        self._marked_times: list[float] = []
+        self.sync: dict[str, Any] | None = None
         self.is_zoomed = False
 
     def reset_start_time(
@@ -95,6 +221,7 @@ class ZoomEventRecorder:
         timestamp: float | None = None,
         client_ms: float | None = None,
         target_state: str | None = None,
+        from_page: bool = False,
     ) -> str | None:
         if target_state == "in" and self.is_zoomed:
             return None
@@ -112,26 +239,65 @@ class ZoomEventRecorder:
             elapsed = (float(client_ms) - self.start_epoch_ms) / 1000.0
         else:
             elapsed = time.monotonic() - self.start_time
-        t_sec = round(max(0.0, elapsed), 3)
+        raw_t = max(0.0, elapsed)
+        t_sec = round(raw_t, 3)
 
         self.is_zoomed = not self.is_zoomed
         event_type = "in" if self.is_zoomed else "out"
         self.events.append({"t": t_sec, "x": px, "y": py, "type": event_type})
+        self._raw_times.append(raw_t)
+        if from_page or client_ms is not None:
+            self._marked_times.append(raw_t)
         return event_type
 
+    def align_to_video(self, video_path: str | Path, ffmpeg_path: str | None = None) -> float | None:
+        if not self.events or not self._marked_times:
+            return None
+        exe = find_ffmpeg(ffmpeg_path)
+        if not exe:
+            logger.warning("Zoom timeline alignment skipped: ffmpeg not found")
+            self.sync = {"aligned": False, "reason": "ffmpeg not found"}
+            return None
+        try:
+            markers = sync_marker_times(video_path, exe, fps=self.fps)
+        except (OSError, subprocess.SubprocessError, ValueError, zlib.error) as exc:
+            logger.warning("Zoom timeline alignment failed: %s", exc)
+            self.sync = {"aligned": False, "reason": str(exc)[:200]}
+            return None
+        offset = estimate_offset(self._marked_times, markers)
+        if offset is None:
+            logger.warning("Zoom timeline alignment skipped: no matching sync markers (%d found)", len(markers))
+            self.sync = {"aligned": False, "reason": "no markers", "markers": len(markers)}
+            return None
+        for ev, raw_t in zip(self.events, self._raw_times):
+            ev["t"] = round(max(0.0, raw_t + offset), 3)
+        self.sync = {
+            "aligned": True,
+            "offset": round(offset, 3),
+            "markers": len(markers),
+            "toggles": len(self._marked_times),
+        }
+        logger.info("Zoom timeline aligned by %+.3fs (%d markers)", offset, len(markers))
+        return offset
+
     def sidecar_payload(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "viewport": {"width": self.width, "height": self.height},
             "fps": self.fps,
             "zoom_factor": self.zoom_factor,
             "ramp_sec": self.ramp_sec,
             "events": list(self.events),
         }
+        if self.sync is not None:
+            payload["sync"] = dict(self.sync)
+        return payload
 
     def write_sidecar(self, video_path: str | Path) -> Path | None:
-        if not self.events:
-            return None
         sidecar_path = Path(f"{video_path}.zoom.json")
+        if not self.events:
+            if sidecar_path.is_file():
+                sidecar_path.unlink()
+            return None
         _ = sidecar_path.write_text(json.dumps(self.sidecar_payload(), indent=2), encoding="utf-8")
         return sidecar_path
 
@@ -353,7 +519,7 @@ def setup_zoom_capture(
     ) -> str | None:
         if source == "f5":
             tracker.note_activity()
-        return recorder.toggle(x, y, client_ms=client_ms, target_state=target_state)
+        return recorder.toggle(x, y, client_ms=client_ms, target_state=target_state, from_page=True)
 
     context.expose_function("__pyRecordZoom", record_zoom)
     if pause_on_user_mouse:
@@ -434,6 +600,7 @@ def save_recorded_video(
     if final_path.exists():
         final_path.unlink()
     _ = shutil.move(raw_path, final_path)
+    _ = recorder.align_to_video(final_path)
     _ = recorder.write_sidecar(final_path)
     return str(final_path.resolve())
 
