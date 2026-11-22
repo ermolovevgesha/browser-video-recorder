@@ -15,7 +15,7 @@ from storage.companies import CompanyStatus
 
 logger = logging.getLogger(__name__)
 
-MAX_TEXT_CHARS = 8000
+MAX_TEXT_CHARS = 2500
 HEAD_WINDOW = 1800
 CLUSTER_GAP = 900
 TAIL_MARGIN = 400
@@ -100,7 +100,9 @@ BOILERPLATE_LINE_RE = re.compile(
 )
 
 FOOTER_LINE_RE = re.compile(
-    r"^(?:datenschutz|agb\b|cookie|©|\(c\)|allgemeine\s+gesch[äa]ftsbedingungen)",
+    r"^(?:datenschutz|agb\b|cookie|©|\(c\)|allgemeine\s+gesch[äa]ftsbedingungen"
+    r"|haftungsausschluss|haftung\s+f[üu]r\s+(?:inhalte|links)|urheberrecht"
+    r"|streitschlichtung|online-streitbeilegung|disclaimer\b|rechtliche\s+hinweise\s+zur\s+webseite)",
     re.IGNORECASE,
 )
 
