@@ -90,6 +90,36 @@ python apply_zoom.py --video "video/Acme E-Commerce.webm" --ffmpeg /path/to/ffmp
 - `GET /get_video_url?company_name=...` — retrieves `video_url`, `processed_video_url`, `processing_status`, and `job_id` for a company.
 - `GET /media/<filename>` — serves uploaded and processed video files directly via Apache `Alias /media /app/uploads` (or Flask fallback when running standalone).
 - `GET /videos` — returns a list of all registered videos in JSON.
+- `GET /upload_companies` — minimal HTML form for uploading a semicolon-delimited companies CSV.
+- `POST /upload_companies` — imports/upserts companies from CSV (`multipart/form-data`, field `file`) without overwriting existing enrichment fields. Returns `{"imported": N, "updated": M, "total_rows": K}`.
+- `GET /companies` — returns all companies as a JSON array (optional `?status=N` filter).
+- `GET /companies/<company_name>` — returns a single company (including extracted Impressum fields) or `404`.
+
+---
+
+## Company Enrichment (`enrich_companies.py`)
+
+Set `DEEPSEEK_API_KEY` in `.env`, optionally override `DEEPSEEK_MODEL` (default `deepseek-chat`).
+
+1. Upload `companies.csv` via `http://localhost:8000/upload_companies` or `curl`:
+```bash
+curl -F "file=@companies.csv" http://localhost:8000/upload_companies
+```
+
+2. Run the enrichment script (inside the Docker container or locally with `DB_HOST=127.0.0.1`):
+```bash
+# Dry run: fetch Impressum pages and inspect optimized text/token counts without calling DeepSeek
+docker compose exec web python enrich_companies.py --dry-run
+
+# Process all not-yet-OK companies (default: status IS NULL OR status <> 0)
+docker compose exec web python enrich_companies.py
+
+# Target one company, limit count, or filter by status
+docker compose exec web python enrich_companies.py --company "nutrimmun GmbH"
+docker compose exec web python enrich_companies.py --limit 5 --status 4
+```
+
+Status codes (`companies.status`): `NULL` pending, `0` `OK`, `1` `NO_IMPRESSUM_LINK_FOUND`, `2` `PARSING_FAILED`, `3` `ADDRESS_INCOMPLETE`, `4` `ERROR`, `5` `NO_WEBSITE`.
 
 ---
 

@@ -5,7 +5,9 @@ description = "CSV-driven Browser Automation Video Recorder + Video Web Service"
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
+    "beautifulsoup4>=4.12.0",
     "flask>=3.0.0",
+    "lxml>=5.0.0",
     "playwright>=1.40.0",
     "psycopg2-binary>=2.9.9",
     "requests>=2.31.0",

@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Upload Companies CSV</title>
+</head>
+<body>
+  <h1>Upload Companies CSV</h1>
+  <form method="post" action="/upload_companies" enctype="multipart/form-data">
+    <input type="file" name="file" accept=".csv,text/csv" required>
+    <button type="submit">Upload</button>
+  </form>
+  <p><a href="/companies">View companies (JSON)</a></p>
+</body>
+</html>

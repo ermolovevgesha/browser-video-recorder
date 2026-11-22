@@ -13,6 +13,8 @@ services:
       DB_PASSWORD: ${DB_PASSWORD}
       AUTO_PROCESS_ZOOM: ${AUTO_PROCESS_ZOOM:-1}
       FFMPEG_PATH: ${FFMPEG_PATH:-ffmpeg}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-chat}
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost/videos >/dev/null || exit 1"]
       interval: 10s
@@ -24,6 +26,8 @@ services:
 
   db:
     image: postgres:16
+    ports:
+      - "127.0.0.1:${DB_HOST_PORT:-5432}:5432"
     environment:
       POSTGRES_DB: ${DB_NAME}
       POSTGRES_USER: ${DB_USER}
