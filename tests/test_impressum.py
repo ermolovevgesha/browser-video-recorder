@@ -7,7 +7,7 @@ import pytest
 import requests
 
 import impressum
-from db import CompanyStatus
+from storage.companies import CompanyStatus
 
 
 def test_normalize_url():

@@ -5,6 +5,7 @@ from urllib.parse import quote
 
 import pytest
 
+import routes.companies as company_routes
 import web_service
 
 
@@ -61,9 +62,9 @@ class FakeCompanyStore:
 
 def test_companies_csv_upload_idempotent_and_endpoints(monkeypatch: pytest.MonkeyPatch):
     store = FakeCompanyStore()
-    monkeypatch.setattr(web_service, "upsert_companies", store.upsert_companies)
-    monkeypatch.setattr(web_service, "get_all_companies", store.get_all_companies)
-    monkeypatch.setattr(web_service, "get_company", store.get_company)
+    monkeypatch.setattr(company_routes, "upsert_companies", store.upsert_companies)
+    monkeypatch.setattr(company_routes, "get_all_companies", store.get_all_companies)
+    monkeypatch.setattr(company_routes, "get_company", store.get_company)
 
     client = web_service.app.test_client()
 

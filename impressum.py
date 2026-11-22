@@ -11,7 +11,7 @@ from urllib.parse import unquote, urljoin, urlparse
 import requests
 from bs4 import BeautifulSoup
 
-from db import CompanyStatus
+from storage.companies import CompanyStatus
 
 logger = logging.getLogger(__name__)
 

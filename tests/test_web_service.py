@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 import apply_zoom
+import routes.videos as video_routes
 import web_service
 
 
@@ -119,7 +120,6 @@ def fake_process_video(
 def test_web_service_upload_process_and_gallery(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     uploads = tmp_path / "uploads"
     uploads.mkdir()
-    monkeypatch.setattr(web_service, "UPLOAD_FOLDER", uploads)
     web_service.app.config["UPLOAD_FOLDER"] = str(uploads)
 
     store = FakeVideoStore()
@@ -133,7 +133,7 @@ def test_web_service_upload_process_and_gallery(tmp_path: Path, monkeypatch: pyt
         "claim_job",
         "complete_job",
     ):
-        monkeypatch.setattr(web_service, method_name, getattr(store, method_name))
+        monkeypatch.setattr(video_routes, method_name, getattr(store, method_name))
     monkeypatch.setattr(apply_zoom, "process_video", fake_process_video)
 
     client = web_service.app.test_client()

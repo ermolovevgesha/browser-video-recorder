@@ -4,7 +4,7 @@ import pytest
 import requests
 
 import enrich_companies
-from db import CompanyStatus
+from storage.companies import CompanyStatus
 from impressum import DeepSeekAPIError, DeepSeekParseError
 
 

@@ -44,7 +44,9 @@ RUN /opt/venv/bin/mod_wsgi-express module-config > /etc/apache2/mods-available/w
 COPY apache-vhost.conf /etc/apache2/sites-available/web_service.conf
 RUN a2ensite web_service.conf
 
-COPY apply_zoom.py db.py enrich_companies.py impressum.py schema.sql web_service.py web_service.wsgi ./
+COPY apply_zoom.py enrich_companies.py impressum.py schema.sql web_service.py web_service.wsgi ./
+COPY routes ./routes
+COPY storage ./storage
 COPY templates ./templates
 
 RUN mkdir -p /app/uploads && chown -R www-data:www-data /app

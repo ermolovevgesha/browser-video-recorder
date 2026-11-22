@@ -10,13 +10,6 @@ from typing import Any
 
 import requests
 
-from db import (
-    CompanyStatus,
-    get_companies_for_enrichment,
-    init_db,
-    update_company_enrichment,
-    update_company_status,
-)
 from impressum import (
     DeepSeekAPIError,
     DeepSeekParseError,
@@ -29,6 +22,13 @@ from impressum import (
     normalize_url,
     optimize_text,
 )
+from storage.companies import (
+    CompanyStatus,
+    get_companies_for_enrichment,
+    update_company_enrichment,
+    update_company_status,
+)
+from storage.connection import init_db
 
 logging.basicConfig(
     level=logging.INFO,

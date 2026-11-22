@@ -27,11 +27,11 @@ def _require_docker_stack() -> None:
 
 def _cleanup_test_company() -> None:
     cleanup_py = (
-        "import db, pathlib; "
-        f"rec = db.get_video({TEST_COMPANY!r}); "
+        "import storage, pathlib; "
+        f"rec = storage.get_video({TEST_COMPANY!r}); "
         "paths = [rec.get('file_path'), rec.get('sidecar_path'), rec.get('processed_file_path')] if rec else []; "
         "[pathlib.Path(p).unlink() for p in paths if p and pathlib.Path(p).is_file()]; "
-        "conn = db.get_db(); "
+        "conn = storage.get_db(); "
         f"cur = conn.cursor(); cur.execute('DELETE FROM videos WHERE company_name = %s', ({TEST_COMPANY!r},)); "
         "conn.commit(); conn.close()"
     )
